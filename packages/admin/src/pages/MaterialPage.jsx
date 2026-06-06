@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { Table, Button, Space, Tag, Modal, Form, Input, Select, InputNumber, message, Popconfirm } from 'antd';
 import { PlusOutlined, SearchOutlined, InboxOutlined } from '@ant-design/icons';
 import { getMaterials, createMaterial, updateMaterial, deleteMaterial, stockIn, getLowStockMaterials } from '../api/material';
-import { Search from 'antd/es/transfer/search';
 
 const MaterialPage = () => {
   const [materials, setMaterials] = useState([]);

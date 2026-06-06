@@ -140,7 +140,7 @@ const generateAutoPurchase = async (req, res) => {
     const lowStockMaterials = await FlowerMaterial.findAll({
       where: {
         status: 'active',
-        currentStock: { [Op.lte]: require('sequelize').col('safety_stock') },
+        currentStock: { [Op.lte]: require('sequelize').col('safetyStock') },
       },
     });
 

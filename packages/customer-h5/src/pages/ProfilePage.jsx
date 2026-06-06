@@ -5,8 +5,7 @@ import {
   UnorderedListOutline,
   UserOutline,
   SetOutline,
-  PhoneOutline,
-  OrderedListOutline,
+  PhoneFill,
   HeartOutline,
 } from 'antd-mobile-icons';
 import { useNavigate, useLocation } from 'react-router-dom';
@@ -39,9 +38,9 @@ const ProfilePage = () => {
   };
 
   const menuItems = [
-    { icon: <OrderedListOutline />, label: '我的订单', onClick: () => navigate('/orders') },
+    { icon: <UnorderedListOutline />, label: '我的订单', onClick: () => navigate('/orders') },
     { icon: <HeartOutline />, label: '我的收藏', onClick: () => {} },
-    { icon: <PhoneOutline />, label: '联系客服', onClick: () => {} },
+    { icon: <PhoneFill />, label: '联系客服', onClick: () => {} },
     { icon: <SetOutline />, label: '设置', onClick: () => {} },
   ];
 

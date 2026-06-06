@@ -31,7 +31,7 @@ const getDashboardStats = async (req, res) => {
     const { count: lowStockCount } = await FlowerMaterial.findAndCountAll({
       where: {
         status: 'active',
-        currentStock: { [Op.lte]: require('sequelize').col('safety_stock') },
+        currentStock: { [Op.lte]: require('sequelize').col('safetyStock') },
       },
     });
 
@@ -274,8 +274,51 @@ const getFloristPerformance = async (req, res) => {
   }
 };
 
+const getOverviewStats = async (req, res) => {
+  try {
+    const { Op } = require('sequelize');
+    const todayStart = dayjs().startOf('day').toDate();
+    const todayEnd = dayjs().endOf('day').toDate();
+    const monthStart = dayjs().startOf('month').toDate();
+    const monthEnd = dayjs().endOf('month').toDate();
+
+    const todayOrders = await Order.count({
+      where: { createdAt: { [Op.between]: [todayStart, todayEnd] } },
+    });
+
+    const pendingOrders = await Order.count({
+      where: { status: 'pending' },
+    });
+
+    const monthRevenue = await Order.sum('totalAmount', {
+      where: {
+        status: 'completed',
+        completedAt: { [Op.between]: [monthStart, monthEnd] },
+      },
+    });
+
+    const lowStockCount = await FlowerMaterial.count({
+      where: {
+        status: 'active',
+        currentStock: { [Op.lte]: require('sequelize').col('safetyStock') },
+      },
+    });
+
+    res.json({
+      todayOrders,
+      pendingOrders,
+      monthRevenue: monthRevenue || 0,
+      lowStockCount,
+    });
+  } catch (error) {
+    console.error('Get overview stats error:', error);
+    res.status(500).json({ message: '获取概览数据失败' });
+  }
+};
+
 module.exports = {
   getDashboardStats,
+  getOverviewStats,
   getRevenueStats,
   getMaterialStats,
   getProductProfitStats,

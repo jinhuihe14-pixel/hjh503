@@ -63,7 +63,7 @@ const ProfilePage = () => {
         <div
           style={{
             background: '#fff',
-            borderRadius: 16px,
+            borderRadius: 16,
             padding: 24,
             marginTop: -20,
             marginBottom: 16,

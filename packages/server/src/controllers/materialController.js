@@ -15,7 +15,7 @@ const getMaterials = async (req, res) => {
     }
     
     if (lowStock === 'true') {
-      where.currentStock = { [Op.lte]: require('sequelize').col('safety_stock') };
+      where.currentStock = { [Op.lte]: require('sequelize').col('safetyStock') };
     }
 
     const { count, rows } = await FlowerMaterial.findAndCountAll({
@@ -231,7 +231,7 @@ const getLowStockMaterials = async (req, res) => {
       where: {
         status: 'active',
         [Op.and]: [
-          { currentStock: { [Op.lte]: col('safety_stock') } },
+          { currentStock: { [Op.lte]: col('safetyStock') } },
         ],
       },
       order: [['currentStock', 'ASC']],

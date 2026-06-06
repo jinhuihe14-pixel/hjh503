@@ -7,7 +7,7 @@ import {
   TeamOutlined,
   WarningOutlined,
 } from '@ant-design/icons';
-import { getDashboardStats } from '../api/stats';
+import { getOverviewStats, getDashboardStats } from '../api/stats';
 import dayjs from 'dayjs';
 
 const DashboardPage = () => {
@@ -20,8 +20,11 @@ const DashboardPage = () => {
 
   const fetchStats = async () => {
     try {
-      const data = await getDashboardStats();
-      setStats(data);
+      const [overviewData, dashboardData] = await Promise.all([
+        getOverviewStats(),
+        getDashboardStats(),
+      ]);
+      setStats({ ...dashboardData, ...overviewData });
     } catch (error) {
       console.error('Fetch stats error:', error);
     } finally {

@@ -1,5 +1,6 @@
 import request from '../utils/request';
 
+export const getOverviewStats = () => request.get('/stats/overview');
 export const getDashboardStats = () => request.get('/stats/dashboard');
 export const getRevenueStats = (params) => request.get('/stats/revenue', { params });
 export const getMaterialStats = (params) => request.get('/stats/material', { params });

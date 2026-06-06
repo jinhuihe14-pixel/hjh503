@@ -4,6 +4,9 @@ const seed = async () => {
   try {
     console.log('开始初始化种子数据...');
 
+    await sequelize.sync({ force: true });
+    console.log('数据库表重建完成');
+
     await User.bulkCreate([
       {
         username: 'admin',
@@ -49,7 +52,7 @@ const seed = async () => {
         phone: '13900139001',
         role: 'customer',
       },
-    ]);
+    ], { individualHooks: true });
     console.log('用户数据初始化完成');
 
     await FlowerMaterial.bulkCreate([

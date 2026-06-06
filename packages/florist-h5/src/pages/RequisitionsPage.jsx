@@ -12,22 +12,27 @@ const RequisitionsPage = () => {
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
-  const [form] = Form.useForm();
   const [orders, setOrders] = useState([]);
   const [materials, setMaterials] = useState([]);
   const [items, setItems] = useState([]);
   const [orderPickerVisible, setOrderPickerVisible] = useState(false);
-  const [materialPickerVisible, setMaterialPickerVisible] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [editMode, setEditMode] = useState(false);
   const [editId, setEditId] = useState(null);
   const [remark, setRemark] = useState('');
+  const [materialsLoading, setMaterialsLoading] = useState(false);
 
   useEffect(() => {
     fetchList();
     fetchOrders();
     fetchMaterials();
   }, []);
+
+  useEffect(() => {
+    if (modalVisible) {
+      fetchMaterials();
+    }
+  }, [modalVisible]);
 
   const fetchList = async () => {
     setLoading(true);
@@ -64,11 +69,14 @@ const RequisitionsPage = () => {
   };
 
   const fetchMaterials = async () => {
+    setMaterialsLoading(true);
     try {
       const data = await getMaterials({ pageSize: 100, status: 'active' });
       setMaterials(data.list || []);
     } catch (error) {
       console.error('Fetch materials error:', error);
+    } finally {
+      setMaterialsLoading(false);
     }
   };
 
@@ -78,7 +86,6 @@ const RequisitionsPage = () => {
     setItems([]);
     setSelectedOrder(null);
     setRemark('');
-    form.resetFields();
     setModalVisible(true);
   };
 
@@ -88,55 +95,42 @@ const RequisitionsPage = () => {
     setItems(record.items || []);
     setSelectedOrder(record.orderId || null);
     setRemark(record.remark || '');
-    form.resetFields();
     setModalVisible(true);
   };
 
-  const addItem = () => {
-    const availableMaterials = materials.filter(
-      m => !items.find(i => i.materialId === m.id)
-    );
-    if (availableMaterials.length === 0) {
-      Toast.show({ content: '没有更多花材可选', icon: 'fail' });
-      return;
-    }
-    setMaterialPickerVisible(true);
-  };
-
-  const onMaterialPick = (value) => {
-    const material = materials.find(m => m.id == value[0]);
-    if (material) {
-      if (parseFloat(material.currentStock) <= 0) {
+  const toggleMaterial = (material) => {
+    const isSelected = items.some(item => item.materialId === material.id);
+    if (isSelected) {
+      setItems(items.filter(item => item.materialId !== material.id));
+    } else {
+      const stock = parseFloat(material.currentStock);
+      if (stock <= 0) {
         Toast.show({ content: `${material.name} 库存为0`, icon: 'fail' });
-        setMaterialPickerVisible(false);
         return;
       }
-      setItems([...items, { 
-        materialId: material.id, 
-        name: material.name, 
-        quantity: 1, 
+      setItems([...items, {
+        materialId: material.id,
+        name: material.name,
+        quantity: 1,
         unit: material.unit,
-        currentStock: parseFloat(material.currentStock),
+        currentStock: stock,
       }]);
     }
-    setMaterialPickerVisible(false);
   };
 
-  const updateItemQuantity = (index, value) => {
-    const newItems = [...items];
-    const material = materials.find(m => m.id === newItems[index].materialId);
-    const maxQty = material ? parseFloat(material.currentStock) : 9999;
-    if (value > maxQty) {
-      Toast.show({ content: `不能超过库存 ${maxQty}${newItems[index].unit}`, icon: 'fail' });
-      value = maxQty;
-    }
-    newItems[index].quantity = value;
-    setItems(newItems);
-  };
-
-  const removeItem = (index) => {
-    const newItems = items.filter((_, i) => i !== index);
-    setItems(newItems);
+  const updateItemQuantity = (materialId, value) => {
+    setItems(items.map(item => {
+      if (item.materialId === materialId) {
+        const material = materials.find(m => m.id === materialId);
+        const maxQty = material ? parseFloat(material.currentStock) : item.currentStock || 9999;
+        if (value > maxQty) {
+          Toast.show({ content: `不能超过库存 ${maxQty}${item.unit}`, icon: 'fail' });
+          value = maxQty;
+        }
+        return { ...item, quantity: value };
+      }
+      return item;
+    }));
   };
 
   const validateItems = () => {
@@ -205,18 +199,6 @@ const RequisitionsPage = () => {
     pending: { text: '待审核', color: '#faad14' },
     approved: { text: '已通过', color: '#52c41a' },
     rejected: { text: '已拒绝', color: '#ff4d4f' },
-  };
-
-  const renderMaterialPickerColumns = () => {
-    const availableMaterials = materials.filter(
-      m => !items.find(i => i.materialId === m.id) && parseFloat(m.currentStock) > 0
-    );
-    return [
-      availableMaterials.map(m => ({ 
-        label: `${m.name} (库存:${m.currentStock}${m.unit})`, 
-        value: m.id 
-      })),
-    ];
   };
 
   return (
@@ -299,7 +281,7 @@ const RequisitionsPage = () => {
         visible={modalVisible}
         title={editMode ? '修改领料申请' : '新建领料申请'}
         onClose={() => setModalVisible(false)}
-        footer={[
+        actions={[
           {
             key: 'cancel',
             text: '取消',
@@ -308,122 +290,182 @@ const RequisitionsPage = () => {
           {
             key: 'submit',
             text: editMode ? '重新提交' : '提交',
-            color: 'primary',
+            primary: true,
             onClick: handleSubmit,
           },
         ]}
-      >
-        <Form form={form} layout="vertical">
-          {!editMode && (
-            <div style={{ marginBottom: 16 }}>
-              <div style={{ fontSize: 14, color: '#333', marginBottom: 8 }}>
-                关联订单（选填）
-              </div>
-              <div
-                onClick={() => setOrderPickerVisible(true)}
-                style={{
-                  padding: 10,
-                  border: '1px solid #eee',
-                  borderRadius: 8,
-                  color: selectedOrder ? '#333' : '#999',
-                  fontSize: 14,
-                }}
-              >
-                {selectedOrder
-                  ? orders.find(o => o.id === selectedOrder)?.orderNo
-                  : '不关联订单（日常领料）'}
-              </div>
-              {orders.length > 0 && (
-                <Picker
-                  columns={[
-                    orders.map(o => ({ label: o.orderNo, value: o.id })),
-                  ]}
-                  visible={orderPickerVisible}
-                  onClose={() => setOrderPickerVisible(false)}
-                  onConfirm={(val) => {
-                    setSelectedOrder(val[0]);
-                    setOrderPickerVisible(false);
-                  }}
-                />
-              )}
-            </div>
-          )}
-
-          <div style={{ marginBottom: 16 }}>
-            <div style={{ fontSize: 14, color: '#333', marginBottom: 8 }}>
-              花材明细
-              <Button size="mini" style={{ marginLeft: 8 }} onClick={addItem}>添加</Button>
-            </div>
-            {items.map((item, index) => {
-              const material = materials.find(m => m.id === item.materialId);
-              const stock = material ? parseFloat(material.currentStock) : item.currentStock || 0;
-              const isOverStock = item.quantity > stock;
-              return (
+        content={
+          <Form layout="vertical">
+            {!editMode && (
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ fontSize: 14, color: '#333', marginBottom: 8 }}>
+                  关联订单（选填）
+                </div>
                 <div
-                  key={index}
+                  onClick={() => setOrderPickerVisible(true)}
                   style={{
-                    padding: '8px 0',
-                    borderBottom: '1px solid #f0f0f0',
+                    padding: 10,
+                    border: '1px solid #eee',
+                    borderRadius: 8,
+                    color: selectedOrder ? '#333' : '#999',
+                    fontSize: 14,
                   }}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', marginBottom: 4 }}>
-                    <span style={{ flex: 1, fontSize: 14, fontWeight: 500 }}>{item.name}</span>
-                    <Button size="mini" color="danger" onClick={() => removeItem(index)}>
-                      删除
-                    </Button>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center' }}>
-                    <span style={{ fontSize: 12, color: isOverStock ? '#ff4d4f' : '#999' }}>
-                      库存：{stock}{item.unit}
-                    </span>
-                    <Stepper
-                      value={item.quantity}
-                      onChange={(val) => updateItemQuantity(index, val)}
-                      min={1}
-                      max={stock}
-                      style={{ marginLeft: 'auto', width: 120 }}
-                    />
-                  </div>
-                  {isOverStock && (
-                    <div style={{ fontSize: 12, color: '#ff4d4f', marginTop: 2 }}>
-                      申领数量超过库存
+                  {selectedOrder
+                    ? orders.find(o => o.id === selectedOrder)?.orderNo
+                    : '不关联订单（日常领料）'}
+                </div>
+                {orders.length > 0 && (
+                  <Picker
+                    columns={[
+                      orders.map(o => ({ label: o.orderNo, value: o.id })),
+                    ]}
+                    visible={orderPickerVisible}
+                    onClose={() => setOrderPickerVisible(false)}
+                    onConfirm={(val) => {
+                      setSelectedOrder(val[0]);
+                      setOrderPickerVisible(false);
+                    }}
+                  />
+                )}
+              </div>
+            )}
+
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 14, color: '#333', marginBottom: 8 }}>
+                选择花材
+                <span style={{ fontSize: 12, color: '#999', marginLeft: 8 }}>
+                  已选 {items.length} 项
+                </span>
+              </div>
+              {materialsLoading ? (
+                <div style={{ textAlign: 'center', padding: '20px 0', color: '#999' }}>
+                  加载中...
+                </div>
+              ) : (
+                <div style={{ maxHeight: '320px', overflowY: 'auto', border: '1px solid #f0f0f0', borderRadius: 8 }}>
+                  {materials.map((material) => {
+                    const isSelected = items.some(item => item.materialId === material.id);
+                    const selectedItem = items.find(item => item.materialId === material.id);
+                    const stock = parseFloat(material.currentStock);
+                    const isOutOfStock = stock <= 0;
+                    const isOverStock = selectedItem && selectedItem.quantity > stock;
+
+                    return (
+                      <div
+                        key={material.id}
+                        onClick={() => !isOutOfStock && toggleMaterial(material)}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'flex-start',
+                          padding: '12px 14px',
+                          borderBottom: '1px solid #f0f0f0',
+                          backgroundColor: isSelected ? '#e6f4ff' : 'transparent',
+                          opacity: isOutOfStock ? 0.5 : 1,
+                          cursor: isOutOfStock ? 'not-allowed' : 'pointer',
+                        }}
+                      >
+                        <div
+                          style={{
+                            width: 20,
+                            height: 20,
+                            border: `2px solid ${isSelected ? '#1677ff' : '#d9d9d9'}`,
+                            borderRadius: 4,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            marginRight: 12,
+                            marginTop: 1,
+                            flexShrink: 0,
+                            backgroundColor: isSelected ? '#1677ff' : 'transparent',
+                            color: '#fff',
+                            fontSize: 12,
+                            fontWeight: 'bold',
+                          }}
+                        >
+                          {isSelected && '✓'}
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ display: 'flex', alignItems: 'center' }}>
+                            <span style={{ fontSize: 15, color: '#333', fontWeight: 500 }}>
+                              {material.name}
+                            </span>
+                            {isOutOfStock && (
+                              <span style={{
+                                fontSize: 11,
+                                color: '#ff4d4f',
+                                marginLeft: 8,
+                                padding: '1px 6px',
+                                background: '#fff1f0',
+                                borderRadius: 4,
+                              }}>
+                                库存为0
+                              </span>
+                            )}
+                          </div>
+                          <div style={{ fontSize: 12, color: isOverStock ? '#ff4d4f' : '#999', marginTop: 4 }}>
+                            当前库存：{stock}{material.unit}
+                          </div>
+                          {isSelected && (
+                            <div
+                              style={{ marginTop: 10 }}
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <div style={{ display: 'flex', alignItems: 'center' }}>
+                                <span style={{ fontSize: 12, color: '#666', marginRight: 10 }}>
+                                  申领数量：
+                                </span>
+                                <Stepper
+                                  value={selectedItem?.quantity || 1}
+                                  onChange={(val) => updateItemQuantity(material.id, val)}
+                                  min={1}
+                                  max={stock}
+                                  style={{ width: 120 }}
+                                />
+                                <span style={{ fontSize: 12, color: '#666', marginLeft: 8 }}>
+                                  {material.unit}
+                                </span>
+                              </div>
+                              {isOverStock && (
+                                <div style={{ fontSize: 12, color: '#ff4d4f', marginTop: 4 }}>
+                                  申领数量超过库存
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {materials.length === 0 && (
+                    <div style={{ textAlign: 'center', padding: '30px 0', color: '#999' }}>
+                      暂无花材数据
                     </div>
                   )}
                 </div>
-              );
-            })}
-            {items.length === 0 && (
-              <div style={{ textAlign: 'center', color: '#999', padding: '20px 0' }}>
-                点击上方添加按钮添加花材
-              </div>
-            )}
-            <Picker
-              columns={renderMaterialPickerColumns()}
-              visible={materialPickerVisible}
-              onClose={() => setMaterialPickerVisible(false)}
-              onConfirm={onMaterialPick}
-            />
-          </div>
+              )}
+            </div>
 
-          <div style={{ marginBottom: 16 }}>
-            <div style={{ fontSize: 14, color: '#333', marginBottom: 8 }}>备注（选填）</div>
-            <textarea
-              value={remark}
-              onChange={(e) => setRemark(e.target.value)}
-              placeholder="请输入备注信息"
-              rows={3}
-              style={{
-                width: '100%',
-                padding: 10,
-                border: '1px solid #eee',
-                borderRadius: 8,
-                fontSize: 14,
-                resize: 'none',
-              }}
-            />
-          </div>
-        </Form>
-      </Modal>
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 14, color: '#333', marginBottom: 8 }}>备注（选填）</div>
+              <textarea
+                value={remark}
+                onChange={(e) => setRemark(e.target.value)}
+                placeholder="请输入备注信息"
+                rows={3}
+                style={{
+                  width: '100%',
+                  padding: 10,
+                  border: '1px solid #eee',
+                  borderRadius: 8,
+                  fontSize: 14,
+                  resize: 'none',
+                }}
+              />
+            </div>
+          </Form>
+        }
+      />
     </div>
   );
 };

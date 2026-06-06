@@ -14,7 +14,7 @@ const MaterialRequisition = sequelize.define('MaterialRequisition', {
   },
   orderId: {
     type: DataTypes.INTEGER,
-    allowNull: false,
+    allowNull: true,
     references: {
       model: 'orders',
       key: 'id',
@@ -53,6 +53,11 @@ const MaterialRequisition = sequelize.define('MaterialRequisition', {
   remark: {
     type: DataTypes.TEXT,
     allowNull: true,
+  },
+  rejectReason: {
+    type: DataTypes.TEXT,
+    allowNull: true,
+    comment: '拒绝原因',
   },
 }, {
   tableName: 'material_requisitions',

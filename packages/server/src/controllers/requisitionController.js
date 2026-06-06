@@ -21,6 +21,7 @@ const getRequisitions = async (req, res) => {
       include: [
         { model: Order, as: 'order', attributes: ['id', 'orderNo'] },
         { model: User, as: 'florist', attributes: ['id', 'name'] },
+        { model: User, as: 'approver', attributes: ['id', 'name'] },
       ],
       order: [['createdAt', 'DESC']],
       limit: parseInt(pageSize),
@@ -48,7 +49,10 @@ const getMyRequisitions = async (req, res) => {
 
     const { count, rows } = await MaterialRequisition.findAndCountAll({
       where,
-      include: [{ model: Order, as: 'order', attributes: ['id', 'orderNo'] }],
+      include: [
+        { model: Order, as: 'order', attributes: ['id', 'orderNo'] },
+        { model: User, as: 'approver', attributes: ['id', 'name'] },
+      ],
       order: [['createdAt', 'DESC']],
       limit: parseInt(pageSize),
       offset: (parseInt(page) - 1) * parseInt(pageSize),
@@ -66,19 +70,87 @@ const getMyRequisitions = async (req, res) => {
   }
 };
 
+const getRequisitionDetail = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const requisition = await MaterialRequisition.findByPk(id, {
+      include: [
+        { model: Order, as: 'order', attributes: ['id', 'orderNo'] },
+        { model: User, as: 'florist', attributes: ['id', 'name'] },
+        { model: User, as: 'approver', attributes: ['id', 'name'] },
+      ],
+    });
+
+    if (!requisition) {
+      return res.status(404).json({ message: '领料单不存在' });
+    }
+
+    if (req.user.role === 'florist' && requisition.floristId !== req.user.id) {
+      return res.status(403).json({ message: '无权限查看' });
+    }
+
+    res.json(requisition);
+  } catch (error) {
+    console.error('Get requisition detail error:', error);
+    res.status(500).json({ message: '获取领料单详情失败' });
+  }
+};
+
+const validateStock = async (items, transaction = null) => {
+  const insufficientItems = [];
+  
+  for (const item of items) {
+    const material = await FlowerMaterial.findByPk(item.materialId, { transaction });
+    if (!material) {
+      insufficientItems.push({
+        materialId: item.materialId,
+        name: item.name,
+        reason: '花材不存在',
+      });
+      continue;
+    }
+    if (parseFloat(material.currentStock) < parseFloat(item.quantity)) {
+      insufficientItems.push({
+        materialId: item.materialId,
+        name: material.name,
+        currentStock: parseFloat(material.currentStock),
+        requested: parseFloat(item.quantity),
+        unit: material.unit,
+        reason: '库存不足',
+      });
+    }
+  }
+  
+  return insufficientItems;
+};
+
 const createRequisition = async (req, res) => {
   try {
     const { orderId, items, remark } = req.body;
     
-    const order = await Order.findByPk(orderId);
-    if (!order) {
-      return res.status(404).json({ message: '订单不存在' });
+    if (!items || items.length === 0) {
+      return res.status(400).json({ message: '请添加花材明细' });
+    }
+
+    if (orderId) {
+      const order = await Order.findByPk(orderId);
+      if (!order) {
+        return res.status(404).json({ message: '订单不存在' });
+      }
+    }
+
+    const insufficientItems = await validateStock(items);
+    if (insufficientItems.length > 0) {
+      return res.status(400).json({
+        message: '部分花材库存不足',
+        insufficientItems,
+      });
     }
 
     const requisitionNo = generateRequisitionNo();
     const requisition = await MaterialRequisition.create({
       requisitionNo,
-      orderId,
+      orderId: orderId || null,
       floristId: req.user.id,
       items,
       remark,
@@ -92,12 +164,58 @@ const createRequisition = async (req, res) => {
   }
 };
 
+const updateRequisition = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { items, remark } = req.body;
+
+    const requisition = await MaterialRequisition.findByPk(id);
+    if (!requisition) {
+      return res.status(404).json({ message: '领料单不存在' });
+    }
+
+    if (requisition.floristId !== req.user.id) {
+      return res.status(403).json({ message: '无权限修改' });
+    }
+
+    if (requisition.status !== 'rejected' && requisition.status !== 'pending') {
+      return res.status(400).json({ message: '当前状态无法修改' });
+    }
+
+    if (!items || items.length === 0) {
+      return res.status(400).json({ message: '请添加花材明细' });
+    }
+
+    const insufficientItems = await validateStock(items);
+    if (insufficientItems.length > 0) {
+      return res.status(400).json({
+        message: '部分花材库存不足',
+        insufficientItems,
+      });
+    }
+
+    await requisition.update({
+      items,
+      remark,
+      status: 'pending',
+      rejectReason: null,
+      approvedBy: null,
+      approvedAt: null,
+    });
+
+    res.json(requisition);
+  } catch (error) {
+    console.error('Update requisition error:', error);
+    res.status(500).json({ message: '修改领料单失败' });
+  }
+};
+
 const approveRequisition = async (req, res) => {
   const transaction = await sequelize.transaction();
   
   try {
     const { id } = req.params;
-    const { rejected = false } = req.body;
+    const { rejected = false, rejectReason } = req.body;
     
     const requisition = await MaterialRequisition.findByPk(id, { transaction });
     if (!requisition) {
@@ -115,23 +233,24 @@ const approveRequisition = async (req, res) => {
         status: 'rejected',
         approvedBy: req.user.id,
         approvedAt: new Date(),
+        rejectReason,
       }, { transaction });
       await transaction.commit();
       return res.json({ message: '已拒绝', requisition });
     }
 
     const items = requisition.items || [];
+    const insufficientItems = await validateStock(items, transaction);
+    if (insufficientItems.length > 0) {
+      await transaction.rollback();
+      return res.status(400).json({
+        message: '部分花材库存不足',
+        insufficientItems,
+      });
+    }
+
     for (const item of items) {
       const material = await FlowerMaterial.findByPk(item.materialId, { transaction });
-      if (!material) {
-        await transaction.rollback();
-        return res.status(400).json({ message: `花材 ${item.name} 不存在` });
-      }
-      if (parseFloat(material.currentStock) < parseFloat(item.quantity)) {
-        await transaction.rollback();
-        return res.status(400).json({ message: `花材 ${item.name} 库存不足` });
-      }
-
       const stockBefore = material.currentStock;
       const stockAfter = parseFloat(stockBefore) - parseFloat(item.quantity);
 
@@ -158,10 +277,12 @@ const approveRequisition = async (req, res) => {
       approvedAt: new Date(),
     }, { transaction });
 
-    await Order.update(
-      { status: 'making' },
-      { where: { id: requisition.orderId }, transaction }
-    );
+    if (requisition.orderId) {
+      await Order.update(
+        { status: 'making' },
+        { where: { id: requisition.orderId }, transaction }
+      );
+    }
 
     await transaction.commit();
     res.json({ message: '审核通过', requisition });
@@ -172,9 +293,56 @@ const approveRequisition = async (req, res) => {
   }
 };
 
+const getMaterialRequisitions = async (req, res) => {
+  try {
+    const { materialId } = req.params;
+    const { page = 1, pageSize = 20 } = req.query;
+
+    const { count, rows } = await StockRecord.findAndCountAll({
+      where: {
+        materialId,
+        type: 'out',
+        relatedType: 'requisition',
+      },
+      include: [
+        { model: User, as: 'operator', attributes: ['id', 'name'] },
+      ],
+      order: [['createdAt', 'DESC']],
+      limit: parseInt(pageSize),
+      offset: (parseInt(page) - 1) * parseInt(pageSize),
+    });
+
+    const requisitionIds = rows.map(r => r.relatedId).filter(Boolean);
+    const requisitions = await MaterialRequisition.findAll({
+      where: { id: requisitionIds },
+      attributes: ['id', 'requisitionNo'],
+    });
+    const requisitionMap = {};
+    requisitions.forEach(r => { requisitionMap[r.id] = r; });
+
+    const list = rows.map(r => ({
+      ...r.toJSON(),
+      requisitionNo: requisitionMap[r.relatedId]?.requisitionNo,
+    }));
+
+    res.json({
+      list,
+      total: count,
+      page: parseInt(page),
+      pageSize: parseInt(pageSize),
+    });
+  } catch (error) {
+    console.error('Get material requisitions error:', error);
+    res.status(500).json({ message: '获取花材领用记录失败' });
+  }
+};
+
 module.exports = {
   getRequisitions,
   getMyRequisitions,
+  getRequisitionDetail,
   createRequisition,
+  updateRequisition,
   approveRequisition,
+  getMaterialRequisitions,
 };

@@ -1,7 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { Table, Button, Space, Tag, Modal, Form, Input, Select, InputNumber, message, Popconfirm } from 'antd';
-import { PlusOutlined, SearchOutlined, InboxOutlined } from '@ant-design/icons';
+import { Table, Button, Space, Tag, Modal, Form, Input, Select, InputNumber, message, Popconfirm, Tabs } from 'antd';
+import { PlusOutlined, SearchOutlined, InboxOutlined, EyeOutlined } from '@ant-design/icons';
 import { getMaterials, createMaterial, updateMaterial, deleteMaterial, stockIn, getLowStockMaterials } from '../api/material';
+import { getMaterialRequisitions } from '../api/requisition';
+import dayjs from 'dayjs';
+
+const { TabPane } = Tabs;
 
 const MaterialPage = () => {
   const [materials, setMaterials] = useState([]);
@@ -10,11 +14,15 @@ const MaterialPage = () => {
   const [filters, setFilters] = useState({});
   const [modalVisible, setModalVisible] = useState(false);
   const [stockModalVisible, setStockModalVisible] = useState(false);
+  const [detailModalVisible, setDetailModalVisible] = useState(false);
   const [currentMaterial, setCurrentMaterial] = useState(null);
   const [modalType, setModalType] = useState('add');
   const [form] = Form.useForm();
   const [stockForm] = Form.useForm();
   const [lowStockWarning, setLowStockWarning] = useState([]);
+  const [requisitionList, setRequisitionList] = useState([]);
+  const [requisitionLoading, setRequisitionLoading] = useState(false);
+  const [requisitionPagination, setRequisitionPagination] = useState({ current: 1, pageSize: 10, total: 0 });
 
   useEffect(() => {
     fetchMaterials();
@@ -115,9 +123,42 @@ const MaterialPage = () => {
       setStockModalVisible(false);
       fetchMaterials();
       fetchLowStock();
+      if (detailModalVisible) {
+        fetchRequisitionList();
+      }
     } catch (error) {
       console.error('Stock in error:', error);
     }
+  };
+
+  const handleViewDetail = async (record) => {
+    setCurrentMaterial(record);
+    setRequisitionPagination({ current: 1, pageSize: 10, total: 0 });
+    setDetailModalVisible(true);
+    await fetchRequisitionList(record.id);
+  };
+
+  const fetchRequisitionList = async (materialId) => {
+    const mid = materialId || currentMaterial?.id;
+    if (!mid) return;
+    setRequisitionLoading(true);
+    try {
+      const data = await getMaterialRequisitions(mid, {
+        page: requisitionPagination.current,
+        pageSize: requisitionPagination.pageSize,
+      });
+      setRequisitionList(data.list);
+      setRequisitionPagination(p => ({ ...p, total: data.total }));
+    } catch (error) {
+      console.error('Fetch requisitions error:', error);
+    } finally {
+      setRequisitionLoading(false);
+    }
+  };
+
+  const handleRequisitionPageChange = (pag) => {
+    setRequisitionPagination(p => ({ ...p, current: pag.current, pageSize: pag.pageSize }));
+    setTimeout(() => fetchRequisitionList(), 0);
   };
 
   const columns = [
@@ -130,7 +171,7 @@ const MaterialPage = () => {
       title: '当前库存',
       dataIndex: 'currentStock',
       key: 'currentStock',
-      width: 100,
+      width: 120,
       render: (v, record) => {
         const isLow = parseFloat(v) <= parseFloat(record.safetyStock);
         return (
@@ -147,9 +188,10 @@ const MaterialPage = () => {
     {
       title: '操作',
       key: 'action',
-      width: 200,
+      width: 240,
       render: (_, record) => (
         <Space size="small">
+          <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => handleViewDetail(record)}>详情</Button>
           <Button type="link" size="small" icon={<InboxOutlined />} onClick={() => handleStockIn(record)}>入库</Button>
           <Button type="link" size="small" onClick={() => handleEdit(record)}>编辑</Button>
           <Popconfirm title="确定删除？" onConfirm={() => handleDelete(record.id)}>
@@ -157,6 +199,22 @@ const MaterialPage = () => {
           </Popconfirm>
         </Space>
       ),
+    },
+  ];
+
+  const requisitionColumns = [
+    { title: '领料单号', dataIndex: 'requisitionNo', key: 'requisitionNo', width: 140 },
+    { title: '操作人', dataIndex: ['operator', 'name'], key: 'operatorName', width: 100 },
+    { title: '数量', dataIndex: 'quantity', key: 'quantity', width: 100, 
+      render: (v, record) => `-${v} ${currentMaterial?.unit || ''}`
+    },
+    { title: '单价', dataIndex: 'unitPrice', key: 'unitPrice', width: 100, render: (v) => `¥${v}` },
+    { title: '总金额', dataIndex: 'totalAmount', key: 'totalAmount', width: 100, render: (v) => `¥${v}` },
+    { title: '变动前库存', dataIndex: 'stockBefore', key: 'stockBefore', width: 100 },
+    { title: '变动后库存', dataIndex: 'stockAfter', key: 'stockAfter', width: 100 },
+    { title: '备注', dataIndex: 'remark', key: 'remark' },
+    { title: '时间', dataIndex: 'createdAt', key: 'createdAt', width: 160, 
+      render: (v) => dayjs(v).format('YYYY-MM-DD HH:mm') 
     },
   ];
 
@@ -204,6 +262,7 @@ const MaterialPage = () => {
         open={modalVisible}
         onOk={handleSubmit}
         onCancel={() => setModalVisible(false)}
+        width={500}
       >
         <Form form={form} layout="vertical">
           <Form.Item name="name" label="花材名称" rules={[{ required: true }]}>
@@ -225,13 +284,13 @@ const MaterialPage = () => {
             <Input placeholder="规格说明" />
           </Form.Item>
           <Form.Item name="safetyStock" label="安全库存">
-            <InputNumber style={{ width: '100%' }} placeholder="请输入安全库存" />
+            <InputNumber style={{ width: '100%' }} placeholder="请输入安全库存" min={0} />
           </Form.Item>
           <Form.Item name="currentStock" label="当前库存">
-            <InputNumber style={{ width: '100%' }} placeholder="请输入当前库存" />
+            <InputNumber style={{ width: '100%' }} placeholder="请输入当前库存" min={0} />
           </Form.Item>
           <Form.Item name="averageCost" label="平均成本">
-            <InputNumber style={{ width: '100%' }} placeholder="请输入平均成本" />
+            <InputNumber style={{ width: '100%' }} placeholder="请输入平均成本" min={0} prefix="¥" />
           </Form.Item>
           <Form.Item name="supplier" label="供应商">
             <Input placeholder="供应商名称" />
@@ -247,6 +306,7 @@ const MaterialPage = () => {
         open={stockModalVisible}
         onOk={handleStockInSubmit}
         onCancel={() => setStockModalVisible(false)}
+        width={400}
       >
         <Form form={stockForm} layout="vertical">
           <div style={{ marginBottom: 16, padding: 12, background: '#f5f5f5', borderRadius: 4 }}>
@@ -263,6 +323,74 @@ const MaterialPage = () => {
             <Input.TextArea rows={2} />
           </Form.Item>
         </Form>
+      </Modal>
+
+      <Modal
+        title={`花材详情 - ${currentMaterial?.name || ''}`}
+        open={detailModalVisible}
+        onCancel={() => setDetailModalVisible(false)}
+        footer={null}
+        width={900}
+      >
+        <Tabs defaultActiveKey="info">
+          <TabPane tab="基本信息" key="info">
+            <div style={{ padding: '12px 0' }}>
+              <div style={{ display: 'flex', marginBottom: 12 }}>
+                <div style={{ width: 120, color: '#666' }}>花材名称：</div>
+                <div>{currentMaterial?.name}</div>
+              </div>
+              <div style={{ display: 'flex', marginBottom: 12 }}>
+                <div style={{ width: 120, color: '#666' }}>分类：</div>
+                <div>{currentMaterial?.category || '-'}</div>
+              </div>
+              <div style={{ display: 'flex', marginBottom: 12 }}>
+                <div style={{ width: 120, color: '#666' }}>单位：</div>
+                <div>{currentMaterial?.unit}</div>
+              </div>
+              <div style={{ display: 'flex', marginBottom: 12 }}>
+                <div style={{ width: 120, color: '#666' }}>规格：</div>
+                <div>{currentMaterial?.spec || '-'}</div>
+              </div>
+              <div style={{ display: 'flex', marginBottom: 12 }}>
+                <div style={{ width: 120, color: '#666' }}>当前库存：</div>
+                <div style={{ fontWeight: 500, color: parseFloat(currentMaterial?.currentStock) <= parseFloat(currentMaterial?.safetyStock) ? '#ff4d4f' : '#000' }}>
+                  {currentMaterial?.currentStock} {currentMaterial?.unit}
+                </div>
+              </div>
+              <div style={{ display: 'flex', marginBottom: 12 }}>
+                <div style={{ width: 120, color: '#666' }}>安全库存：</div>
+                <div>{currentMaterial?.safetyStock} {currentMaterial?.unit}</div>
+              </div>
+              <div style={{ display: 'flex', marginBottom: 12 }}>
+                <div style={{ width: 120, color: '#666' }}>平均成本：</div>
+                <div>¥{currentMaterial?.averageCost}</div>
+              </div>
+              <div style={{ display: 'flex', marginBottom: 12 }}>
+                <div style={{ width: 120, color: '#666' }}>供应商：</div>
+                <div>{currentMaterial?.supplier || '-'}</div>
+              </div>
+              <div style={{ display: 'flex' }}>
+                <div style={{ width: 120, color: '#666' }}>备注：</div>
+                <div>{currentMaterial?.remark || '-'}</div>
+              </div>
+            </div>
+          </TabPane>
+          <TabPane tab="领用记录" key="requisitions">
+            <Table
+              rowKey="id"
+              size="small"
+              columns={requisitionColumns}
+              dataSource={requisitionList}
+              loading={requisitionLoading}
+              pagination={{
+                current: requisitionPagination.current,
+                pageSize: requisitionPagination.pageSize,
+                total: requisitionPagination.total,
+              }}
+              onChange={handleRequisitionPageChange}
+            />
+          </TabPane>
+        </Tabs>
       </Modal>
     </div>
   );
